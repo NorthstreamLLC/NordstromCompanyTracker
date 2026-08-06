@@ -7,11 +7,13 @@ import { useStore, HAS_SUPABASE } from '@/lib/store';
 
 const NAV = [
   { href: '/overview',     label: 'Overview' },
+  { href: '/cashflow',     label: 'Cash flow' },
+  { href: '/goals',        label: 'Goals' },
   { href: '/transactions', label: 'Transactions' },
-  { href: '/import',       label: 'Import' },
   { href: '/budgets',      label: 'Budgets' },
-  { href: '/business',     label: 'Business' },
   { href: '/accounts',     label: 'Accounts' },
+  { href: '/business',     label: 'Business' },
+  { href: '/import',       label: 'Import' },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {

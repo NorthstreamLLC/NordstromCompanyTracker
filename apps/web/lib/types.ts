@@ -1,4 +1,4 @@
-import type { Designation } from '@finscope/core';
+import type { Designation, Direction, Frequency, RecurringItemLike } from '@finscope/core';
 
 export interface Workspace {
   id: string; name: string; type: 'personal' | 'household' | 'business';
@@ -29,3 +29,17 @@ export interface Category {
   designation: Designation | null; businessGroup: string | null;
   isTaxDeductibleDefault: boolean;
 }
+
+export interface Recurring extends RecurringItemLike {
+  workspaceId: string;
+}
+
+export interface Goal {
+  id: string; workspaceId: string; name: string; type: string;
+  targetAmount: string; currentAmount: string; currency: string;
+  targetDate: string | null; plannedMonthlyContribution: string | null;
+  linkedAccountId: string | null; priority: number; notes: string | null;
+  achievedAt?: string | null;
+}
+
+export type { Direction, Frequency };

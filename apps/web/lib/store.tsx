@@ -13,10 +13,10 @@
  */
 
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
-import type { Account, Budget, Txn, Workspace } from './types';
+import type { Account, Budget, Goal, Recurring, Txn, Workspace } from './types';
 import { businessGroupFor } from './categories';
 
-const KEY = 'finscope.v1';
+const KEY = 'finscope.v2';
 export const HAS_SUPABASE = Boolean(
   process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
 );
@@ -26,6 +26,8 @@ interface DbShape {
   accounts: Account[];
   transactions: Txn[];
   budgets: Budget[];
+  recurring: Recurring[];
+  goals: Goal[];
   activeWorkspaceId: string | null;
 }
 
@@ -40,9 +42,15 @@ const seed = (): DbShape => {
       { id: 'acc-card',     workspaceId: household.id, name: 'Household Card',    institution: 'Manual', type: 'credit_card', class: 'liability', currency: 'USD', currentBalance: '1830.20', designation: 'personal', includeInNetWorth: true, includeInCashFlow: true },
       { id: 'acc-biz',      workspaceId: business.id,  name: 'Business Checking', institution: 'Manual', type: 'checking', class: 'asset', currency: 'USD', currentBalance: '28950.00', designation: 'business', includeInNetWorth: true, includeInCashFlow: true },
       { id: 'acc-bizcard',  workspaceId: business.id,  name: 'Business Card',     institution: 'Manual', type: 'credit_card', class: 'liability', currency: 'USD', currentBalance: '3120.75', designation: 'business', includeInNetWorth: true, includeInCashFlow: true },
+      // Long-term accounts count toward net worth but are deliberately kept out
+      // of monthly cash flow — a 401k balance rising is not spendable income.
+      { id: 'acc-401k', workspaceId: household.id, name: '401(k)', institution: 'Manual', type: 'retirement_401k', class: 'asset', currency: 'USD', currentBalance: '86400.00', designation: 'personal', includeInNetWorth: true, includeInCashFlow: false },
+      { id: 'acc-ira',  workspaceId: household.id, name: 'Roth IRA', institution: 'Manual', type: 'retirement_roth_ira', class: 'asset', currency: 'USD', currentBalance: '31250.00', designation: 'personal', includeInNetWorth: true, includeInCashFlow: false },
     ],
     transactions: [],
     budgets: [],
+    recurring: [],
+    goals: [],
     activeWorkspaceId: household.id,
   };
 };
@@ -74,12 +82,21 @@ interface StoreApi {
   allAccounts: Account[];
   transactions: Txn[];
   budgets: Budget[];
+  recurring: Recurring[];
+  goals: Goal[];
+  addRecurring: (r: Omit<Recurring, 'id' | 'workspaceId'>) => Recurring;
+  updateRecurring: (id: string, patch: Partial<Recurring>) => void;
+  deleteRecurring: (id: string) => void;
+  addGoal: (g: Omit<Goal, 'id' | 'workspaceId'>) => Goal;
+  updateGoal: (id: string, patch: Partial<Goal>) => void;
+  deleteGoal: (id: string) => void;
   addTransaction: (t: Omit<Txn, 'id' | 'workspaceId'>) => Txn;
   addTransactions: (rows: Array<Omit<Txn, 'id' | 'workspaceId'>>) => Txn[];
   updateTransaction: (id: string, patch: Partial<Txn>) => void;
   deleteTransaction: (id: string) => void;
   undoImport: (importId: string) => number;
   addAccount: (a: Omit<Account, 'id' | 'workspaceId'>) => Account;
+  updateAccountBalance: (id: string, balance: string) => void;
   addBudget: (b: Omit<Budget, 'id' | 'workspaceId'>) => Budget;
   deleteBudget: (id: string) => void;
   existingHashes: Set<string>;
@@ -104,6 +121,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
                          .sort((a, b) => b.postedOn.localeCompare(a.postedOn)),
     [db.transactions, wsId]);
   const budgets = useMemo(() => db.budgets.filter(b => b.workspaceId === wsId), [db.budgets, wsId]);
+  const recurring = useMemo(
+    () => db.recurring.filter(r => r.workspaceId === wsId), [db.recurring, wsId]);
+  const goals = useMemo(
+    () => db.goals.filter(g => g.workspaceId === wsId)
+                  .sort((a, b) => a.priority - b.priority), [db.goals, wsId]);
   const existingHashes = useMemo(
     () => new Set(db.transactions.filter(t => t.dedupeHash).map(t => `${t.accountId}:${t.dedupeHash}`)),
     [db.transactions]);
@@ -124,7 +146,28 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     allAccounts: db.accounts,
     transactions,
     budgets,
+    recurring,
+    goals,
     existingHashes,
+
+    addRecurring: r => {
+      const row: Recurring = { ...r, id: uid(), workspaceId: wsId! };
+      setDb(d => ({ ...d, recurring: [...d.recurring, row] }));
+      return row;
+    },
+    updateRecurring: (id, patch) =>
+      setDb(d => ({ ...d, recurring: d.recurring.map(r => (r.id === id ? { ...r, ...patch } : r)) })),
+    deleteRecurring: id =>
+      setDb(d => ({ ...d, recurring: d.recurring.filter(r => r.id !== id) })),
+
+    addGoal: g => {
+      const row: Goal = { ...g, id: uid(), workspaceId: wsId! };
+      setDb(d => ({ ...d, goals: [...d.goals, row] }));
+      return row;
+    },
+    updateGoal: (id, patch) =>
+      setDb(d => ({ ...d, goals: d.goals.map(g => (g.id === id ? { ...g, ...patch } : g)) })),
+    deleteGoal: id => setDb(d => ({ ...d, goals: d.goals.filter(g => g.id !== id) })),
 
     addTransaction: t => {
       const row = normalize(t);
@@ -161,6 +204,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setDb(d => ({ ...d, accounts: [...d.accounts, row] }));
       return row;
     },
+    updateAccountBalance: (id, balance) =>
+      setDb(d => ({
+        ...d,
+        accounts: d.accounts.map(a => (a.id === id ? { ...a, currentBalance: balance } : a)),
+      })),
     addBudget: b => {
       const row: Budget = { ...b, id: uid(), workspaceId: wsId! };
       setDb(d => ({ ...d, budgets: [...d.budgets, row] }));
