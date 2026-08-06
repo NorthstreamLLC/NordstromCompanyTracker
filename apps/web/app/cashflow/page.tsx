@@ -8,13 +8,14 @@ import {
 } from '@finscope/core';
 import { useStore } from '@/lib/store';
 import { fmt, fmtPct, monthBounds } from '@/lib/format';
-import { CATEGORIES, categoryName } from '@/lib/categories';
+import { categoryName } from '@/lib/categories';
+import { CategorySelect } from '@/components/CategorySelect';
 import { INCOME_PRESETS, EXPENSE_PRESETS, type Preset } from '@/lib/recurringDefaults';
 import { AnimatedNumber, StatCard, ProgressBar, Empty, usePrefersReducedMotion } from '@/components/ui';
 import type { Direction } from '@finscope/core';
 
 export default function CashFlow() {
-  const { recurring, transactions, accounts, addRecurring, deleteRecurring, workspace, ready } = useStore();
+  const { recurring, transactions, accounts, addRecurring, updateRecurring, deleteRecurring, workspace, ready } = useStore();
   const [adding, setAdding] = useState<Direction | null>(null);
   const currency = workspace?.baseCurrency ?? 'USD';
   const reduced = usePrefersReducedMotion();
@@ -140,11 +141,13 @@ export default function CashFlow() {
           <div className="grid grid-2" style={{ marginBottom: 14 }}>
             <RecurringList
               title="Income" items={incomeItems} currency={currency}
-              onDelete={deleteRecurring} emptyHint="No income entered yet."
+              onDelete={deleteRecurring} onUpdate={updateRecurring}
+              emptyHint="No income entered yet."
             />
             <RecurringList
               title="Expenses" items={expenseItems} currency={currency}
-              onDelete={deleteRecurring} emptyHint="No recurring expenses entered yet."
+              onDelete={deleteRecurring} onUpdate={updateRecurring}
+              emptyHint="No recurring expenses entered yet."
             />
           </div>
 
@@ -209,14 +212,17 @@ function Compare({ label, planned, actual, invert }: {
   );
 }
 
-function RecurringList({ title, items, currency, onDelete, emptyHint }: {
+function RecurringList({ title, items, currency, onDelete, onUpdate, emptyHint }: {
   title: string;
   items: ReturnType<typeof useStore>['recurring'];
   currency: string;
   onDelete: (id: string) => void;
+  onUpdate: ReturnType<typeof useStore>['updateRecurring'];
   emptyHint: string;
 }) {
-  const total = items.reduce((acc, i) => acc.add(monthlyEquivalent(i)), Money.zero(currency));
+  const total = items.filter(i => i.isActive)
+    .reduce((acc, i) => acc.add(monthlyEquivalent(i)), Money.zero(currency));
+
   return (
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
@@ -228,32 +234,128 @@ function RecurringList({ title, items, currency, onDelete, emptyHint }: {
       ) : (
         <div style={{ display: 'grid', gap: 2 }}>
           {items.map(i => (
-            <div key={i.id} style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '9px 0', borderBottom: '1px solid var(--border)', gap: 10,
-            }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 530, fontSize: 14 }}>{i.name}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>
-                  {fmt(Money.from(i.amount, i.currency))} · {FREQUENCY_LABEL[i.frequency as Frequency]}
-                  {' · '}{i.isFixed ? 'Fixed' : 'Flexible'}
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
-                <div style={{ textAlign: 'right' }}>
-                  <div className="tnum" style={{ fontWeight: 550, fontSize: 14 }}>
-                    {fmt(monthlyEquivalent(i))}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
-                    {fmt(annualizedAmount(i))}/yr
-                  </div>
-                </div>
-                <button className="btn btn-sm" onClick={() => onDelete(i.id)} aria-label={`Remove ${i.name}`}>×</button>
-              </div>
-            </div>
+            <RecurringRow key={i.id} item={i} onDelete={onDelete} onUpdate={onUpdate} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** A line item that edits in place. Every field is changeable — amounts,
+ *  frequency and categories all drift over time, and forcing a delete-and-
+ *  recreate cycle to change a rent figure is how data goes stale. */
+function RecurringRow({ item, onDelete, onUpdate }: {
+  item: ReturnType<typeof useStore>['recurring'][number];
+  onDelete: (id: string) => void;
+  onUpdate: ReturnType<typeof useStore>['updateRecurring'];
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(item.name);
+  const [amount, setAmount] = useState(item.amount);
+  const [frequency, setFrequency] = useState<Frequency>(item.frequency as Frequency);
+  const [categorySlug, setCategorySlug] = useState(item.categorySlug ?? 'uncategorized');
+  const [isFixed, setIsFixed] = useState(item.isFixed);
+
+  const reset = () => {
+    setName(item.name); setAmount(item.amount);
+    setFrequency(item.frequency as Frequency);
+    setCategorySlug(item.categorySlug ?? 'uncategorized');
+    setIsFixed(item.isFixed);
+  };
+
+  const save = () => {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) { reset(); setEditing(false); return; }
+    onUpdate(item.id, {
+      name: name.trim() || item.name,
+      amount: n.toFixed(2),
+      frequency,
+      categorySlug,
+      isFixed,
+    });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div style={{
+        padding: '13px', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
+        background: 'var(--surface-2)', marginBottom: 6,
+      }}>
+        <div className="row">
+          <div className="field" style={{ flex: '1 1 150px' }}>
+            <label htmlFor={`n-${item.id}`}>Name</label>
+            <input id={`n-${item.id}`} value={name} onChange={e => setName(e.target.value)} autoFocus />
+          </div>
+          <div className="field" style={{ flex: '0 0 120px' }}>
+            <label htmlFor={`a-${item.id}`}>Amount</label>
+            <input id={`a-${item.id}`} type="number" step="0.01" min="0" value={amount}
+                   onChange={e => setAmount(e.target.value)}
+                   onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { reset(); setEditing(false); } }} />
+          </div>
+          <div className="field" style={{ flex: '0 0 160px' }}>
+            <label htmlFor={`f-${item.id}`}>How often</label>
+            <select id={`f-${item.id}`} value={frequency} onChange={e => setFrequency(e.target.value as Frequency)}>
+              {Object.entries(FREQUENCY_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="row" style={{ marginTop: 10 }}>
+          <CategorySelect
+            id={`c-${item.id}`} value={categorySlug} onChange={setCategorySlug}
+            {...(item.direction === 'inflow' ? { incomeOnly: true } : { expenseOnly: true })}
+          />
+          {item.direction === 'outflow' && (
+            <div className="field" style={{ flex: '0 0 150px' }}>
+              <label htmlFor={`x-${item.id}`}>Type</label>
+              <select id={`x-${item.id}`} value={isFixed ? 'fixed' : 'flexible'}
+                      onChange={e => setIsFixed(e.target.value === 'fixed')}>
+                <option value="fixed">Fixed bill</option>
+                <option value="flexible">Flexible</option>
+              </select>
+            </div>
+          )}
+          <button type="button" className="btn btn-primary" onClick={save}>Save</button>
+          <button type="button" className="btn" onClick={() => { reset(); setEditing(false); }}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      padding: '9px 0', borderBottom: '1px solid var(--border)', gap: 10,
+      opacity: item.isActive ? 1 : 0.5,
+    }}>
+      <button
+        onClick={() => setEditing(true)}
+        style={{ background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', minWidth: 0, flex: 1, padding: 0 }}
+        title="Click to edit"
+      >
+        <div style={{ fontWeight: 530, fontSize: 14 }}>
+          {item.name}
+          {!item.isActive && <span className="badge" style={{ marginLeft: 6 }}>Paused</span>}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>
+          {fmt(Money.from(item.amount, item.currency))} · {FREQUENCY_LABEL[item.frequency as Frequency]}
+          {' · '}{categoryName(item.categorySlug)}
+          {item.direction === 'outflow' && ` · ${item.isFixed ? 'Fixed' : 'Flexible'}`}
+        </div>
+      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
+        <div style={{ textAlign: 'right' }}>
+          <div className="tnum" style={{ fontWeight: 550, fontSize: 14 }}>{fmt(monthlyEquivalent(item))}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{fmt(annualizedAmount(item))}/yr</div>
+        </div>
+        <button className="btn btn-sm" onClick={() => setEditing(true)} aria-label={`Edit ${item.name}`}>Edit</button>
+        <button className="btn btn-sm" onClick={() => onUpdate(item.id, { isActive: !item.isActive })}
+                aria-label={item.isActive ? `Pause ${item.name}` : `Resume ${item.name}`}>
+          {item.isActive ? 'Pause' : 'Resume'}
+        </button>
+        <button className="btn btn-sm" onClick={() => onDelete(item.id)} aria-label={`Remove ${item.name}`}>×</button>
+      </div>
     </div>
   );
 }
@@ -275,8 +377,6 @@ function RecurringForm({ direction, currency, onSubmit }: {
     setCategorySlug(p.categorySlug); setIsFixed(p.isFixed);
   };
 
-  const options = CATEGORIES.filter(c => (direction === 'inflow' ? c.isIncome : !c.isIncome));
-
   return (
     <form className="card" onSubmit={e => {
       e.preventDefault();
@@ -292,13 +392,16 @@ function RecurringForm({ direction, currency, onSubmit }: {
     }}>
       <h2>{direction === 'inflow' ? 'Add income' : 'Add a recurring expense'}</h2>
 
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
         {presets.map(p => (
           <button key={p.name} type="button" className="btn btn-sm" onClick={() => applyPreset(p)}>
             {p.name}
           </button>
         ))}
       </div>
+      <p className="subtitle" style={{ marginTop: 0, marginBottom: 14, fontSize: 12.5 }}>
+        Shortcuts — or just type your own name and category below.
+      </p>
 
       <div className="row">
         <div className="field" style={{ flex: '1 1 180px' }}>
@@ -317,12 +420,10 @@ function RecurringForm({ direction, currency, onSubmit }: {
             {Object.entries(FREQUENCY_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </div>
-        <div className="field" style={{ flex: '1 1 170px' }}>
-          <label htmlFor="rc">Category</label>
-          <select id="rc" value={categorySlug} onChange={e => setCategorySlug(e.target.value)}>
-            {options.map(c => <option key={c.slug} value={c.slug}>{c.name}</option>)}
-          </select>
-        </div>
+        <CategorySelect
+          id="rc" value={categorySlug} onChange={setCategorySlug}
+          {...(direction === 'inflow' ? { incomeOnly: true } : { expenseOnly: true })}
+        />
         {direction === 'outflow' && (
           <div className="field" style={{ flex: '0 0 150px' }}>
             <label htmlFor="rfx">Type</label>

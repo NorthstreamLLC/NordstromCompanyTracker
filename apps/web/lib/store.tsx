@@ -13,10 +13,10 @@
  */
 
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
-import type { Account, Budget, Goal, Recurring, Txn, Workspace } from './types';
+import type { Account, Budget, Category, Goal, Recurring, Txn, Workspace } from './types';
 import { businessGroupFor } from './categories';
 
-const KEY = 'finscope.v2';
+const KEY = 'finscope.v3';
 export const HAS_SUPABASE = Boolean(
   process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
 );
@@ -28,6 +28,7 @@ interface DbShape {
   budgets: Budget[];
   recurring: Recurring[];
   goals: Goal[];
+  customCategories: Category[];
   activeWorkspaceId: string | null;
 }
 
@@ -51,6 +52,7 @@ const seed = (): DbShape => {
     budgets: [],
     recurring: [],
     goals: [],
+    customCategories: [],
     activeWorkspaceId: household.id,
   };
 };
@@ -84,6 +86,8 @@ interface StoreApi {
   budgets: Budget[];
   recurring: Recurring[];
   goals: Goal[];
+  customCategories: Category[];
+  addCustomCategory: (name: string, opts?: { isIncome?: boolean }) => Category;
   addRecurring: (r: Omit<Recurring, 'id' | 'workspaceId'>) => Recurring;
   updateRecurring: (id: string, patch: Partial<Recurring>) => void;
   deleteRecurring: (id: string) => void;
@@ -148,7 +152,27 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     budgets,
     recurring,
     goals,
+    customCategories: db.customCategories,
     existingHashes,
+
+    // A category the user typed. Slugified so it behaves like a built-in one
+    // everywhere downstream; suffixed on collision so two different custom
+    // categories can never silently merge into one bucket.
+    addCustomCategory: (name, opts = {}) => {
+      const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+        || 'custom';
+      const existing = new Set(db.customCategories.map(c => c.slug));
+      let slug = base, n = 2;
+      while (existing.has(slug)) slug = `${base}-${n++}`;
+
+      const row: Category = {
+        slug, name: name.trim() || 'Custom',
+        isIncome: opts.isIncome ?? false,
+        designation: null, businessGroup: null, isTaxDeductibleDefault: false,
+      };
+      setDb(d => ({ ...d, customCategories: [...d.customCategories, row] }));
+      return row;
+    },
 
     addRecurring: r => {
       const row: Recurring = { ...r, id: uid(), workspaceId: wsId! };

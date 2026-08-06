@@ -55,7 +55,17 @@ export const CATEGORIES: Category[] = [
 ];
 
 export const CATEGORY_BY_SLUG = new Map(CATEGORIES.map(c => [c.slug, c]));
-export const categoryName = (slug?: string | null) =>
-  (slug && CATEGORY_BY_SLUG.get(slug)?.name) || 'Uncategorized';
+
+/**
+ * Resolves a slug to a display name. Falls back to un-slugifying the value so a
+ * user-created category still reads properly even where the custom list is not
+ * in scope — better "Boat Fuel" than "Uncategorized".
+ */
+export const categoryName = (slug?: string | null): string => {
+  if (!slug) return 'Uncategorized';
+  const known = CATEGORY_BY_SLUG.get(slug);
+  if (known) return known.name;
+  return slug.replace(/-/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+};
 export const businessGroupFor = (slug?: string | null) =>
   (slug && CATEGORY_BY_SLUG.get(slug)?.businessGroup) || null;

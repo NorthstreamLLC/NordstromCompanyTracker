@@ -8,3 +8,4 @@ export * from './networth.ts';
 export * from './csv.ts';
 export * from './rules.ts';
 export * from './recurring.ts';
+export * from './trends.ts';
