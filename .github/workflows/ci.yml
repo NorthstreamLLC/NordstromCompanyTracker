@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push makes an in-flight run irrelevant. Cancel it rather than
+# burning minutes on a result nobody will read.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Node 22+ required: the core tests run TypeScript directly via
+  # --experimental-strip-types, with no build step.
+  NODE_VERSION: '22'
+
+jobs:
+  ledger:
+    name: Ledger and security tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      # These assert the properties that make the books trustworthy: one user
+      # cannot read another's ledger, debits always equal credits, and a closed
+      # period cannot be altered. They need no database and no credentials —
+      # Postgres runs in-process via PGlite.
+      - name: Workspace isolation and row-level security
+        run: node tests/isolation.test.mjs
+        working-directory: packages/db
+
+      - name: Double-entry invariants and period locking
+        run: node tests/ledger.test.mjs
+        working-directory: packages/db
+
+  core:
+    name: Financial calculations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      # Money arithmetic, cash flow, budgets, goals, CSV parsing, trends, and
+      # the statements. Includes the assertion that the balance sheet balances.
+      - name: Run calculation tests
+        run: npm test
+        working-directory: packages/core
+
+  build:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+        working-directory: apps/web
+
+      - name: Production build
+        run: npx next build
+        working-directory: apps/web
+        env:
+          # The app runs in local mode without Supabase credentials, which is
+          # exactly what we want in CI — no secrets needed to verify it builds.
+          NEXT_TELEMETRY_DISABLED: '1'
