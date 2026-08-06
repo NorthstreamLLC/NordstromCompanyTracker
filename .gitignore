@@ -1,4 +1,10 @@
 node_modules/
+# Renamed-aside copies. On Windows, deleting node_modules often fails because a
+# process holds a file open, so renaming it out of the way is the usual escape
+# hatch — and the leftover must never reach git.
+node_modules_old/
+node_modules.bak/
+node_modules*/
 dist/
 .next/
 .turbo/
