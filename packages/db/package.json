@@ -1,0 +1,16 @@
+{
+  "name": "@finscope/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/isolation.test.mjs",
+    "migrate": "node scripts/migrate.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}
