@@ -17,6 +17,17 @@ import type { Account, Budget, Category, Goal, Recurring, Txn, Workspace } from 
 import { businessGroupFor } from './categories';
 
 const KEY = 'finscope.v3';
+
+/**
+ * Older storage keys, newest first.
+ *
+ * Bumping the key on a schema change throws the user's data away. That is
+ * never acceptable in a financial app — someone who spent twenty minutes
+ * entering their accounts should not lose it because a field was added.
+ * On first load we read the newest key that exists and migrate it forward,
+ * filling in anything the older shape did not have.
+ */
+const LEGACY_KEYS = ['finscope.v2', 'finscope.v1'];
 export const HAS_SUPABASE = Boolean(
   process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
 );
@@ -59,12 +70,48 @@ const seed = (): DbShape => {
 
 function load(): DbShape {
   if (typeof window === 'undefined') return seed();
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return seed();
-    const parsed = JSON.parse(raw) as DbShape;
-    return { ...seed(), ...parsed };
-  } catch { return seed(); }
+
+  const read = (key: string): Partial<DbShape> | null => {
+    try {
+      const raw = window.localStorage.getItem(key);
+      return raw ? (JSON.parse(raw) as Partial<DbShape>) : null;
+    } catch { return null; }
+  };
+
+  let stored = read(KEY);
+  let migratedFrom: string | null = null;
+
+  if (!stored) {
+    for (const key of LEGACY_KEYS) {
+      const legacy = read(key);
+      if (legacy) { stored = legacy; migratedFrom = key; break; }
+    }
+  }
+
+  if (!stored) return seed();
+
+  const base = seed();
+  const merged: DbShape = {
+    // Fall back field by field rather than spreading wholesale, so a key that
+    // predates a field gets the default instead of `undefined` — which would
+    // crash the first `.filter()` that touches it.
+    workspaces:        stored.workspaces?.length        ? stored.workspaces        : base.workspaces,
+    accounts:          stored.accounts          ?? base.accounts,
+    transactions:      stored.transactions      ?? base.transactions,
+    budgets:           stored.budgets           ?? base.budgets,
+    recurring:         stored.recurring         ?? base.recurring,
+    goals:             stored.goals             ?? base.goals,
+    customCategories:  stored.customCategories  ?? base.customCategories,
+    activeWorkspaceId: stored.activeWorkspaceId ?? base.activeWorkspaceId,
+  };
+
+  // Persist under the current key immediately, and keep the old copy rather
+  // than deleting it — if this migration is wrong, the original is still there.
+  if (migratedFrom) {
+    try { window.localStorage.setItem(KEY, JSON.stringify(merged)); } catch { /* quota */ }
+  }
+
+  return merged;
 }
 
 function persist(db: DbShape) {
@@ -80,6 +127,9 @@ interface StoreApi {
   workspaces: Workspace[];
   workspace: Workspace | null;
   setWorkspace: (id: string) => void;
+  addWorkspace: (w: Omit<Workspace, 'id'>) => Workspace;
+  renameWorkspace: (id: string, name: string) => void;
+  deleteWorkspace: (id: string) => void;
   accounts: Account[];
   allAccounts: Account[];
   transactions: Txn[];
@@ -146,6 +196,33 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     workspaces: db.workspaces,
     workspace,
     setWorkspace: id => setDb(d => ({ ...d, activeWorkspaceId: id })),
+
+    addWorkspace: w => {
+      const row: Workspace = { ...w, id: uid() };
+      setDb(d => ({ ...d, workspaces: [...d.workspaces, row], activeWorkspaceId: row.id }));
+      return row;
+    },
+    renameWorkspace: (id, name) =>
+      setDb(d => ({ ...d, workspaces: d.workspaces.map(w => (w.id === id ? { ...w, name } : w)) })),
+
+    // Removing a workspace takes everything scoped to it. Anything else would
+    // leave orphaned financial records that still count toward totals.
+    deleteWorkspace: id =>
+      setDb(d => {
+        if (d.workspaces.length <= 1) return d;
+        const remaining = d.workspaces.filter(w => w.id !== id);
+        return {
+          ...d,
+          workspaces: remaining,
+          accounts: d.accounts.filter(a => a.workspaceId !== id),
+          transactions: d.transactions.filter(t => t.workspaceId !== id),
+          budgets: d.budgets.filter(b => b.workspaceId !== id),
+          recurring: d.recurring.filter(r => r.workspaceId !== id),
+          goals: d.goals.filter(g => g.workspaceId !== id),
+          activeWorkspaceId: d.activeWorkspaceId === id
+            ? (remaining[0]?.id ?? null) : d.activeWorkspaceId,
+        };
+      }),
     accounts,
     allAccounts: db.accounts,
     transactions,

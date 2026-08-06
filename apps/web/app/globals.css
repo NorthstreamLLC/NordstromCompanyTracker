@@ -247,3 +247,65 @@ input:focus, select:focus, textarea:focus {
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .seg button[data-active='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
+
+/* Editable rows. A row that responds to a click should look like it does —
+   discoverability was the actual failure, not the missing capability. */
+.editable-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 9px 10px; margin: 0 -10px;
+  border-bottom: 1px solid var(--border); gap: 10px;
+  border-radius: var(--radius-sm);
+  transition: background var(--dur) var(--ease);
+}
+.editable-row:hover { background: var(--surface-hover); }
+.editable-row .edit-hint {
+  opacity: 0; font-size: 11.5px; color: var(--accent); font-weight: 600;
+  transition: opacity var(--dur) var(--ease); white-space: nowrap;
+}
+.editable-row:hover .edit-hint,
+.editable-row:focus-within .edit-hint { opacity: 1; }
+
+.editable-trigger {
+  background: none; border: none; text-align: left; cursor: pointer;
+  min-width: 0; flex: 1; padding: 0; font: inherit; color: inherit;
+}
+
+/* ── Financial statements ────────────────────────────────────────────────── */
+
+.stmt { width: 100%; border-collapse: collapse; font-size: 14px; }
+.stmt td { padding: 6px 0; border: none; }
+.stmt .amt { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.stmt .indent { padding-left: 18px; color: var(--text-muted); }
+.stmt .section-head {
+  font-weight: 650; font-size: 11.5px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-subtle);
+  padding-top: 16px; padding-bottom: 4px;
+}
+.stmt .subtotal td {
+  border-top: 1px solid var(--border); font-weight: 600; padding-top: 8px;
+}
+.stmt .total td {
+  border-top: 2px solid var(--text); border-bottom: 3px double var(--text);
+  font-weight: 700; padding: 9px 0;
+}
+.stmt .code { color: var(--text-subtle); font-size: 12px; padding-right: 10px; }
+
+/* Print: statements are handed to clients and accountants, so printing has to
+   produce something that looks like a real financial statement — not a
+   screenshot of an app with a navigation sidebar down the left. */
+@media print {
+  .sidebar, .no-print, .seg, .btn { display: none !important; }
+  .shell { grid-template-columns: 1fr; }
+  .main { padding: 0; max-width: none; }
+  .card {
+    border: none; box-shadow: none; padding: 0; break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  body { background: #fff; color: #000; font-size: 11pt; }
+  .print-only { display: block !important; }
+  h1 { font-size: 16pt; }
+  h2 { font-size: 12pt; }
+  .stmt .total td { border-color: #000; }
+  @page { margin: 18mm; }
+}
+.print-only { display: none; }

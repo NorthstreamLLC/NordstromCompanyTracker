@@ -324,19 +324,16 @@ function RecurringRow({ item, onDelete, onUpdate }: {
   }
 
   return (
-    <div style={{
-      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      padding: '9px 0', borderBottom: '1px solid var(--border)', gap: 10,
-      opacity: item.isActive ? 1 : 0.5,
-    }}>
+    <div className="editable-row" style={{ opacity: item.isActive ? 1 : 0.5 }}>
       <button
         onClick={() => setEditing(true)}
-        style={{ background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', minWidth: 0, flex: 1, padding: 0 }}
-        title="Click to edit"
+        className="editable-trigger"
+        title={`Edit ${item.name}`}
       >
-        <div style={{ fontWeight: 530, fontSize: 14 }}>
+        <div style={{ fontWeight: 530, fontSize: 14, display: 'flex', alignItems: 'center', gap: 7 }}>
           {item.name}
-          {!item.isActive && <span className="badge" style={{ marginLeft: 6 }}>Paused</span>}
+          {!item.isActive && <span className="badge">Paused</span>}
+          <span className="edit-hint">Click to edit</span>
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>
           {fmt(Money.from(item.amount, item.currency))} · {FREQUENCY_LABEL[item.frequency as Frequency]}
